@@ -30,6 +30,19 @@ python make_user_pairs.py --out user_pairs.jsonl --from_txt inputs.txt --sep tab
 
 ```
 
+```bash
+# inputs.txt
+
+いぬをかいたい	犬を飼いたい
+ねこをかいたい	猫を飼いたい
+まぐろをかいたい	マグロを解体
+ていをなす	体をなす
+きかいがとまる	機械が止まる
+せいどがひくい	精度が低い
+かたがこる	肩がこる
+
+```
+
 ## Usage
 
 ```bash
