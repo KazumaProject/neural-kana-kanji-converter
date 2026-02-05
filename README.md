@@ -70,6 +70,8 @@ python make_pairs_from_wiki40b_ja.py --out pairs_ctx.jsonl --split train --strea
 ```
 
 ```bash
+
+# 2) 学習 （前後文脈あり）
 python train.py --pairs pairs_ctx.jsonl --out_dir out_ctx --device cpu --epochs 5 --batch_size 16 --max_src_len 192 --max_tgt_len 64
 
 
