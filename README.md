@@ -89,7 +89,7 @@ python train.py --pairs pairs_ctx.jsonl user_pairs.jsonl --out_dir out_ctx --dev
 
 ```bash
 # 推論（前後文脈あり）
-python infer.py --model_dir out_ctx --text きょう --left 今日は --right は雨です --topk 5
+python infer.py --model_dir out_ctx --text なまえは --left 私の --right 中野です --topk 5
 
 ```
 
