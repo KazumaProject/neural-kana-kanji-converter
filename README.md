@@ -14,6 +14,22 @@ pip install sudachipy sudachidict_core
 pip install fugashi unidic-lite
 ```
 
+### Create user defined source file
+
+```bash
+# 1件追加
+python make_user_pairs.py --out user_pairs.jsonl --add --reading_hira まぐろをかいたい --surface マグロを解体
+
+# inputs.txt から一括追加（タブ区切り）
+python make_user_pairs.py --out user_pairs.jsonl --from_txt inputs.txt --sep tab
+
+# 上書きしたい
+
+python make_user_pairs.py --out user_pairs.jsonl --from_txt inputs.txt --sep tab --overwrite
+
+
+```
+
 ## Usage
 
 ```bash
@@ -31,12 +47,18 @@ pairs.jsonl (one sample per line):
 {"id":"...", "reading_hira":"きょうはみずをのんだ", "surface":"今日は水を飲んだ"}
 
 ## Install
+```bash
 python -m venv .venv
 . .venv/bin/activate
 pip install -r requirements.txt
+```
 
 ## Train
+```bash
 python train.py --pairs pairs.jsonl --out_dir out --device cpu --epochs 5 --batch_size 16 --max_src_len 128 --max_tgt_len 128
+
+python train.py --pairs pairs.jsonl user_pairs.jsonl --out_dir out --device cpu --epochs 5 --batch_size 16 --max_src_len 128 --max_tgt_len 128
+```
 
 Outputs:
 out/model.pt

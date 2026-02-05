@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import math
 from pathlib import Path
-from typing import List
+from typing import List, Set, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -18,7 +18,14 @@ from kkc.utils import set_seed, get_device, save_checkpoint
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
-    p.add_argument("--pairs", type=str, required=True, help="pairs.jsonl path")
+    # CHANGED: allow multiple jsonl paths
+    p.add_argument(
+        "--pairs",
+        type=str,
+        nargs="+",
+        required=True,
+        help="pairs.jsonl paths (one or more). e.g. --pairs pairs.jsonl user_pairs.jsonl",
+    )
     p.add_argument("--out_dir", type=str, required=True, help="output directory")
     p.add_argument("--valid_ratio", type=float, default=0.02)
     p.add_argument("--seed", type=int, default=42)
@@ -43,6 +50,14 @@ def parse_args() -> argparse.Namespace:
 
     p.add_argument("--device", type=str, default="cuda", choices=["cpu", "cuda", "mps"])
     p.add_argument("--num_workers", type=int, default=2)
+
+    # NEW: dedupe merged pairs (safe default)
+    p.add_argument(
+        "--no_dedupe_pairs",
+        action="store_true",
+        help="do not deduplicate merged pairs across multiple jsonl inputs",
+    )
+
     return p.parse_args()
 
 
@@ -54,20 +69,51 @@ def lr_schedule(step: int, base_lr: float, warmup_steps: int) -> float:
     return base_lr
 
 
+def _load_merged_samples(paths: List[Path], dedupe: bool) -> List:
+    """
+    Reads samples from multiple jsonl files and merges them.
+
+    Assumption: kkc.data.read_pairs_jsonl returns List[Sample] where Sample has .src and .tgt.
+    If your jsonl includes {reading_hira, surface}, read_pairs_jsonl must map them to src/tgt.
+    """
+    for p in paths:
+        if not p.exists():
+            raise RuntimeError(f"pairs file not found: {p}")
+
+    merged: List = []
+    if not dedupe:
+        for p in paths:
+            merged.extend(read_pairs_jsonl(p))
+        return merged
+
+    seen: Set[Tuple[str, str]] = set()
+    for p in paths:
+        ss = read_pairs_jsonl(p)
+        for s in ss:
+            key = (s.src, s.tgt)
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(s)
+    return merged
+
+
 def main() -> None:
     args = parse_args()
     set_seed(args.seed)
     device = get_device(args.device)
 
-    pairs_path = Path(args.pairs)
+    pairs_paths = [Path(x) for x in args.pairs]
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    samples = read_pairs_jsonl(pairs_path)
+    samples = _load_merged_samples(pairs_paths, dedupe=(not args.no_dedupe_pairs))
     if len(samples) < 10:
-        raise RuntimeError(f"Too few samples: {len(samples)}")
+        raise RuntimeError(f"Too few samples after merge: {len(samples)}")
 
-    train_samples, valid_samples = split_train_valid(samples, valid_ratio=args.valid_ratio, seed=args.seed)
+    train_samples, valid_samples = split_train_valid(
+        samples, valid_ratio=args.valid_ratio, seed=args.seed
+    )
 
     # build vocab from train only (safe)
     src_vocab = build_vocab((s.src for s in train_samples), min_freq=args.min_char_freq)
@@ -76,8 +122,12 @@ def main() -> None:
     save_vocab(src_vocab, out_dir / "src_vocab.json")
     save_vocab(tgt_vocab, out_dir / "tgt_vocab.json")
 
-    train_ds = PairDataset(train_samples, src_vocab, tgt_vocab, args.max_src_len, args.max_tgt_len)
-    valid_ds = PairDataset(valid_samples, src_vocab, tgt_vocab, args.max_src_len, args.max_tgt_len)
+    train_ds = PairDataset(
+        train_samples, src_vocab, tgt_vocab, args.max_src_len, args.max_tgt_len
+    )
+    valid_ds = PairDataset(
+        valid_samples, src_vocab, tgt_vocab, args.max_src_len, args.max_tgt_len
+    )
 
     train_dl = DataLoader(
         train_ds,
