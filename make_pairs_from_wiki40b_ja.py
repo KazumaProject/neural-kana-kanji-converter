@@ -7,6 +7,8 @@ import sys
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Tuple
 
+import random
+
 # -------------------------
 # Wiki40B cleanup
 # -------------------------
@@ -30,116 +32,29 @@ def split_sentences(s: str) -> List[str]:
     lines = [ln.strip() for ln in s.splitlines() if ln.strip()]
     out: List[str] = []
     for ln in lines:
-        parts = [p.strip() for p in SENT_SPLIT_RE.split(ln) if p.strip()]
-        out.extend(parts)
+        out.extend([x for x in SENT_SPLIT_RE.split(ln) if x])
     return out
 
 
 # -------------------------
-# Strict surface filter (Japanese-only)
+# Strict surface filter (avoid ASCII/marks)
 # -------------------------
-# 目的:
-# - surface に英字/ギリシャ文字/数字/括弧/ハイフン等を含む文を除外する
-# - 許可する文字をホワイトリスト方式で定義し、それ以外が1文字でもあれば落とす
-#
-# 許可:
-# - ひらがな: 3040-309F
-# - カタカナ: 30A0-30FF
-# - 漢字(CJK統合漢字): 4E00-9FFF
-# - 々: 3005
-# - ー: 30FC
-# - ゝゞ: 309D-309E
-# - ヽヾ: 30FD-30FE
-# - ・: 30FB
-# - 句読点/！？: 。、！？ + 半角 !?
-_ALLOWED_EXTRA_CODEPOINTS = {
-    # 0x3005,  # 々
-    # 0x30FC,  # ー
-    # 0x30FB,  # ・
-    # 0x3002,  # 。
-    # 0x3001,  # 、
-    # 0xFF01,  # ！
-    # 0xFF1F,  # ？
-    # 0x0021,  # !
-    # 0x003F,  # ?
-}
-
-
-def _is_allowed_japanese_char(ch: str) -> bool:
-    if ch.isspace():
-        return True
-
-    code = ord(ch)
-
-    # Hiragana
-    if 0x3040 <= code <= 0x309F:
-        return True
-    # Katakana
-    if 0x30A0 <= code <= 0x30FF:
-        return True
-    # Kanji (CJK Unified Ideographs)
-    if 0x4E00 <= code <= 0x9FFF:
-        return True
-    # Iteration marks
-    if 0x309D <= code <= 0x309E:  # ゝゞ
-        return True
-    if 0x30FD <= code <= 0x30FE:  # ヽヾ
-        return True
-
-    if code in _ALLOWED_EXTRA_CODEPOINTS:
-        return True
-
-    return False
+# Allow: hiragana, katakana, kanji, prolonged sound mark, iteration marks, punctuation commonly used in Japanese,
+# spaces, and a handful of full-width punctuation.
+_ALLOWED_SURFACE_RE = re.compile(
+    r"^[\u3000-\u303F"  # CJK symbols & punctuation
+    r"\u3040-\u309F"    # Hiragana
+    r"\u30A0-\u30FF"    # Katakana
+    r"\u4E00-\u9FFF"    # Kanji (CJK Unified Ideographs)
+    r"\uFF01-\uFF60"    # Full-width forms (some punctuation)
+    r"\s"
+    r"ー・、。！？「」『』（）［］【】〔〕〈〉《》…"
+    r"]+$"
+)
 
 
 def contains_disallowed_chars(s: str) -> bool:
-    for ch in s:
-        if not _is_allowed_japanese_char(ch):
-            return True
-    return False
-
-
-# -------------------------
-# Reading normalization
-# -------------------------
-_KATAKANA_RANGE = (0x30A1, 0x30F6)  # small a .. small ke
-
-
-def katakana_to_hiragana(s: str) -> str:
-    out: List[str] = []
-    for ch in s:
-        code = ord(ch)
-        if _KATAKANA_RANGE[0] <= code <= _KATAKANA_RANGE[1]:
-            out.append(chr(code - 0x60))
-        else:
-            out.append(ch)
-    return "".join(out)
-
-
-_HIRAGANA_RE = re.compile(r"^[\u3041-\u3096ー]+$")  # include prolonged sound mark
-_KATAKANA_RE = re.compile(r"^[\u30A1-\u30F6ー]+$")
-_ASCII_RE = re.compile(r"^[\u0000-\u007F]+$")
-
-
-def is_readable_surface_as_reading(surface: str) -> bool:
-    # If token is already kana or ascii symbol/number, we can treat it as "reading".
-    # NOTE: 文レベルで strict filter をかけるので、ここは既存仕様を維持。
-    if not surface:
-        return False
-    if _HIRAGANA_RE.match(surface):
-        return True
-    if _KATAKANA_RE.match(surface):
-        return True
-    if _ASCII_RE.match(surface):
-        return True
-    return False
-
-
-def surface_to_reading_hira(surface: str) -> str:
-    # Use surface as reading if it's kana/ascii. Katakana -> hiragana
-    if _KATAKANA_RE.match(surface):
-        return katakana_to_hiragana(surface)
-    return surface
+    return _ALLOWED_SURFACE_RE.match(s) is None
 
 
 # -------------------------
@@ -148,7 +63,7 @@ def surface_to_reading_hira(surface: str) -> str:
 @dataclass(frozen=True)
 class Token:
     surface: str
-    reading_hira: Optional[str]  # None if unknown
+    reading_hira: Optional[str]  # None if unknown/unavailable
 
 
 class Analyzer:
@@ -158,104 +73,101 @@ class Analyzer:
         raise NotImplementedError
 
 
+# -------------------------
+# None analyzer: fallback (no reading)
+# -------------------------
 class NoneAnalyzer(Analyzer):
     name = "none"
 
     def tokenize(self, text: str) -> List[Token]:
-        # no morphological analysis: treat each char as token
-        # reading == surface (hiragana normalization for katakana)
-        toks: List[Token] = []
-        for ch in text:
-            if ch.isspace():
-                continue
-            rh = surface_to_reading_hira(ch) if is_readable_surface_as_reading(ch) else None
-            toks.append(Token(surface=ch, reading_hira=rh))
-        return toks
+        # no reading -> will be filtered out by coverage
+        return [Token(surface=text, reading_hira=None)]
 
 
+# -------------------------
+# SudachiPy analyzer
+# -------------------------
 class SudachiAnalyzer(Analyzer):
     name = "sudachi"
 
-    def __init__(self, mode: str = "C") -> None:
+    def __init__(self, mode: str) -> None:
         try:
             from sudachipy import dictionary as sudachi_dictionary  # type: ignore
             from sudachipy import tokenizer as sudachi_tokenizer  # type: ignore
         except Exception as e:
-            raise RuntimeError(
-                "SudachiPy not installed. Install: pip install sudachipy sudachidict_core"
-            ) from e
+            raise RuntimeError("SudachiPy not installed. Install: pip install sudachipy sudachidict_core") from e
 
         self._tokenizer = sudachi_dictionary.Dictionary().create()
         self._mode = {
             "A": sudachi_tokenizer.Tokenizer.SplitMode.A,
             "B": sudachi_tokenizer.Tokenizer.SplitMode.B,
             "C": sudachi_tokenizer.Tokenizer.SplitMode.C,
-        }.get(mode.upper(), sudachi_tokenizer.Tokenizer.SplitMode.C)
+        }[mode]
+
+    @staticmethod
+    def _kata_to_hira(s: str) -> str:
+        out = []
+        for ch in s:
+            o = ord(ch)
+            # Katakana small a..small ke
+            if 0x30A1 <= o <= 0x30F6:
+                out.append(chr(o - 0x60))
+            else:
+                out.append(ch)
+        return "".join(out)
 
     def tokenize(self, text: str) -> List[Token]:
         ms = self._tokenizer.tokenize(text, self._mode)
         out: List[Token] = []
         for m in ms:
             surf = m.surface()
-            # Sudachi reading_form() is usually katakana for Japanese words; can be '*' sometimes.
+            # reading_form is katakana; sometimes '*' or empty
             r = m.reading_form()
-            if r and r != "*" and r != surf:
-                rh = katakana_to_hiragana(r)
+            if not r or r == "*":
+                out.append(Token(surface=surf, reading_hira=None))
             else:
-                rh = surface_to_reading_hira(surf) if is_readable_surface_as_reading(surf) else None
-            out.append(Token(surface=surf, reading_hira=rh))
+                out.append(Token(surface=surf, reading_hira=self._kata_to_hira(r)))
         return out
 
 
+# -------------------------
+# MeCab analyzer (optional)
+# -------------------------
 class MeCabAnalyzer(Analyzer):
     name = "mecab"
 
     def __init__(self) -> None:
-        """
-        Uses fugashi.
-        Recommended minimal install:
-          pip install fugashi unidic-lite
-        """
         try:
-            from fugashi import Tagger  # type: ignore
+            import fugashi  # type: ignore
         except Exception as e:
-            raise RuntimeError("fugashi not installed. Install: pip install fugashi unidic-lite") from e
+            raise RuntimeError("fugashi not installed. Install: pip install fugashi[unidic-lite]") from e
+        self._tagger = fugashi.Tagger()
 
-        # Let fugashi pick default dic (unidic-lite if installed).
-        self._tagger = Tagger()
-
-    def _get_reading(self, w) -> Optional[str]:
-        # Try a few common fugashi feature shapes:
-        # - UniDic: w.feature has .kana / .pron / .reading (varies)
-        # - IPADIC: w.feature is tuple/list with reading at index 7
-        feat = getattr(w, "feature", None)
-
-        # UniDic-like: attributes
-        for attr in ("kana", "reading", "pron"):
-            val = getattr(feat, attr, None)
-            if isinstance(val, str) and val and val != "*":
-                return katakana_to_hiragana(val)
-
-        # IPADIC-like: sequence
-        if isinstance(feat, (tuple, list)):
-            # ipadic: ... , reading, pronunciation
-            if len(feat) >= 8:
-                val = feat[7]
-                if isinstance(val, str) and val and val != "*":
-                    return katakana_to_hiragana(val)
-
-        return None
+    @staticmethod
+    def _kata_to_hira(s: str) -> str:
+        out = []
+        for ch in s:
+            o = ord(ch)
+            if 0x30A1 <= o <= 0x30F6:
+                out.append(chr(o - 0x60))
+            else:
+                out.append(ch)
+        return "".join(out)
 
     def tokenize(self, text: str) -> List[Token]:
         out: List[Token] = []
         for w in self._tagger(text):
-            surf = str(w.surface)
-            r = self._get_reading(w)
-            if r:
-                rh = r
-            else:
-                rh = surface_to_reading_hira(surf) if is_readable_surface_as_reading(surf) else None
-            out.append(Token(surface=surf, reading_hira=rh))
+            surf = w.surface
+            # UniDic: reading is in w.feature.kana or w.feature.pron?
+            reading = None
+            try:
+                # fugashi feature depends on dictionary; unidic-lite has kana
+                kana = getattr(w.feature, "kana", None)
+                if isinstance(kana, str) and kana and kana != "*":
+                    reading = self._kata_to_hira(kana)
+            except Exception:
+                reading = None
+            out.append(Token(surface=surf, reading_hira=reading))
         return out
 
 
@@ -304,6 +216,88 @@ def tokens_to_reading(tokens: List[Token]) -> Tuple[str, float, bool]:
     return reading, coverage, has_unknown
 
 
+def _contains_kanji(s: str) -> bool:
+    # CJK Unified Ideographs
+    for ch in s:
+        code = ord(ch)
+        if 0x4E00 <= code <= 0x9FFF:
+            return True
+    return False
+
+
+def _slice_left_context(s: str, max_chars: int) -> str:
+    if max_chars <= 0:
+        return ""
+    return s[-max_chars:]
+
+
+def _slice_right_context(s: str, max_chars: int) -> str:
+    if max_chars <= 0:
+        return ""
+    return s[:max_chars]
+
+
+def _make_span_examples(
+    toks: List[Token],
+    samples_per_sentence: int,
+    max_target_tokens: int,
+    max_left_chars: int,
+    max_right_chars: int,
+    prefer_kanji_target: bool,
+    rng: random.Random,
+) -> List[Tuple[str, str, str, str]]:
+    """Create IME-like training samples from a tokenized sentence.
+
+    Returns list of tuples:
+      (left_context_surface, reading_hira, right_context_surface, target_surface)
+    """
+
+    # Drop whitespace-only tokens just in case.
+    tokens = [t for t in toks if t.surface and (not t.surface.isspace())]
+    if not tokens:
+        return []
+
+    # Require readings for target span; keep tokens even if reading is None for context.
+    n = len(tokens)
+    out: List[Tuple[str, str, str, str]] = []
+
+    surfaces = [t.surface for t in tokens]
+    readings = [t.reading_hira for t in tokens]
+
+    # Candidate spans (i, j) where all readings in [i, j) exist.
+    candidates: List[Tuple[int, int]] = []
+    for i in range(n):
+        if readings[i] is None:
+            continue
+        # extend up to max_target_tokens
+        for j in range(i + 1, min(n, i + max_target_tokens) + 1):
+            if any(r is None for r in readings[i:j]):
+                break
+            tgt_sf = "".join(surfaces[i:j])
+            if prefer_kanji_target and (not _contains_kanji(tgt_sf)):
+                continue
+            candidates.append((i, j))
+
+    if not candidates:
+        return []
+
+    rng.shuffle(candidates)
+    for (i, j) in candidates[:samples_per_sentence]:
+        left_sf = "".join(surfaces[:i])
+        right_sf = "".join(surfaces[j:])
+        tgt_sf = "".join(surfaces[i:j])
+        rh = "".join(readings[i:j])  # type: ignore[arg-type]
+
+        left_sf = _slice_left_context(left_sf, max_left_chars)
+        right_sf = _slice_right_context(right_sf, max_right_chars)
+
+        if not rh or not tgt_sf:
+            continue
+        out.append((left_sf, rh, right_sf, tgt_sf))
+
+    return out
+
+
 def iter_wiki40b_sentences(split: str, streaming: bool) -> Iterable[str]:
     try:
         from datasets import load_dataset  # type: ignore
@@ -326,6 +320,22 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max_len", type=int, default=120, help="max sentence length (surface)")
     p.add_argument("--min_len", type=int, default=2, help="min sentence length (surface)")
 
+    # - sentence: legacy (reading of the whole sentence -> sentence)
+    # - span: IME-like (left_context + reading + right_context -> target_surface)
+    p.add_argument("--mode", type=str, default="span", choices=["sentence", "span"])
+
+    # span-mode controls
+    p.add_argument("--samples_per_sentence", type=int, default=2, help="span-mode: examples per sentence")
+    p.add_argument("--max_target_tokens", type=int, default=4, help="span-mode: max tokens per target")
+    p.add_argument("--max_left_chars", type=int, default=24, help="span-mode: keep last N chars of left context")
+    p.add_argument("--max_right_chars", type=int, default=24, help="span-mode: keep first N chars of right context")
+    p.add_argument(
+        "--allow_no_kanji_target",
+        action="store_true",
+        help="span-mode: allow targets without kanji (default: prefer targets containing kanji)",
+    )
+    p.add_argument("--rng_seed", type=int, default=42, help="span-mode: RNG seed for span sampling")
+
     p.add_argument("--analyzer", type=str, default="sudachi", choices=["sudachi", "mecab", "none"])
     p.add_argument("--sudachi_mode", type=str, default="C", choices=["A", "B", "C"])
 
@@ -337,6 +347,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
+
+    rng = random.Random(args.rng_seed)
 
     analyzer = build_analyzer(args.analyzer, args.sudachi_mode)
 
@@ -355,14 +367,12 @@ def main() -> None:
                 n_filtered += 1
                 continue
 
-            # ★ 追加: surface を日本語ホワイトリストで厳格フィルタ
-            # 例: "Β (お笑い芸人)" / "Β-セクレターゼ1" はここで落ちる
+            # strict whitelist
             if contains_disallowed_chars(s):
                 n_filtered += 1
                 continue
 
             if not args.allow_ascii:
-                # rough filter: too much ascii tends to be noise for Japanese IME training
                 ascii_ratio = sum(1 for ch in s if ord(ch) < 128) / max(1, len(s))
                 if ascii_ratio > 0.4:
                     n_filtered += 1
@@ -381,15 +391,50 @@ def main() -> None:
                 n_filtered += 1
                 continue
 
-            obj = {
-                "id": f"{args.split}:{n_written}",
-                "reading_hira": reading_hira,
-                "surface": s,
-                "analyzer": analyzer.name,
-                "coverage": round(coverage, 4),
-            }
-            fo.write(json.dumps(obj, ensure_ascii=False) + "\n")
-            n_written += 1
+            if args.mode == "sentence":
+                obj = {
+                    "id": f"{args.split}:{n_written}",
+                    "reading_hira": reading_hira,
+                    "surface": s,
+                    "analyzer": analyzer.name,
+                    "coverage": round(coverage, 4),
+                    "mode": "sentence",
+                }
+                fo.write(json.dumps(obj, ensure_ascii=False) + "\n")
+                n_written += 1
+            else:
+                examples = _make_span_examples(
+                    toks=toks,
+                    samples_per_sentence=args.samples_per_sentence,
+                    max_target_tokens=args.max_target_tokens,
+                    max_left_chars=args.max_left_chars,
+                    max_right_chars=args.max_right_chars,
+                    prefer_kanji_target=(not args.allow_no_kanji_target),
+                    rng=rng,
+                )
+                if not examples:
+                    n_filtered += 1
+                    continue
+
+                for (left_ctx, rh, right_ctx, tgt_surface) in examples:
+                    obj = {
+                        "id": f"{args.split}:{n_written}",
+                        "left": left_ctx,
+                        "reading_hira": rh,
+                        "right": right_ctx,
+                        "surface": tgt_surface,
+                        "analyzer": analyzer.name,
+                        "coverage": round(coverage, 4),
+                        "mode": "span",
+                    }
+                    fo.write(json.dumps(obj, ensure_ascii=False) + "\n")
+                    n_written += 1
+
+                    if n_written >= args.max_lines:
+                        break
+
+                if n_written >= args.max_lines:
+                    break
 
             if n_written >= args.max_lines:
                 break

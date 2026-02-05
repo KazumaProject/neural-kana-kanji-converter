@@ -43,6 +43,48 @@ python make_user_pairs.py --out user_pairs.jsonl --from_txt inputs.txt --sep tab
 
 ```
 
+
+#### 前後の文脈の考慮した input.txt
+
+```bash
+left<TAB>reading_hira<TAB>right<TAB>surface
+
+# 2列（従来）
+たなか	田中
+
+# 3列（right なし）
+私は	きょうは		今日は
+
+# 3列（left なし）
+	きょうは	仕事だ	今日は
+
+# 4列（left/right 両方あり、空もOK）
+私は	きょうは	仕事だ	今日は
+
+```
+
+```bash
+# iki40B から context-aware データ生成（span モードがデフォルト）
+python make_pairs_from_wiki40b_ja.py --out pairs_ctx.jsonl --split train --streaming --max_lines 200000 --analyzer sudachi --sudachi_mode C --drop_unknown
+
+```
+
+```bash
+
+# 2) 学習 （前後文脈あり）
+python train.py --pairs pairs_ctx.jsonl --out_dir out_ctx --device cpu --epochs 5 --batch_size 16 --max_src_len 192 --max_tgt_len 64
+
+
+python train.py --pairs pairs_ctx.jsonl user_pairs.jsonl --out_dir out_ctx --device cpu --epochs 5 --batch_size 16 --max_src_len 192 --max_tgt_len 64
+```
+
+
+```bash
+# 推論（前後文脈あり）
+python infer.py --model_dir out_ctx --text きょう --left 今日は --right は雨です --topk 5
+
+```
+
 ## Usage
 
 ```bash

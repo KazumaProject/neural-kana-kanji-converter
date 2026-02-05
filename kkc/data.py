@@ -14,8 +14,27 @@ from .tokenizer import CharVocab
 
 @dataclass(frozen=True)
 class PairSample:
-    src: str  # reading_hira
-    tgt: str  # surface
+    src: str  # source string (may include context markers)
+    tgt: str  # target surface
+
+
+# -------------------------
+# Context packing (src)
+# -------------------------
+# IME-like usage:
+#   src := left_context + "⟨" + reading_hira + "⟩" + right_context
+#
+# Rationale:
+# - The model is character-level, so we keep boundaries as single unique chars.
+# - These markers are part of src vocab (learned from training data).
+CTX_L = "⟨"  # U+27E8
+CTX_R = "⟩"  # U+27E9
+
+
+def pack_src_with_context(left: str, reading_hira: str, right: str) -> str:
+    left = left or ""
+    right = right or ""
+    return f"{left}{CTX_L}{reading_hira}{CTX_R}{right}"
 
 
 def read_pairs_jsonl(path: Path) -> List[PairSample]:
@@ -26,8 +45,22 @@ def read_pairs_jsonl(path: Path) -> List[PairSample]:
             if not line:
                 continue
             obj = json.loads(line)
-            src = str(obj.get("reading_hira", ""))
-            tgt = str(obj.get("surface", ""))
+            # Supported schemas:
+            # 1) legacy: {reading_hira, surface}
+            # 2) explicit: {src, tgt}
+            # 3) context-aware: {left, reading_hira, right, surface}
+            if "src" in obj and "tgt" in obj:
+                src = str(obj.get("src", ""))
+                tgt = str(obj.get("tgt", ""))
+            elif ("left" in obj) or ("right" in obj) or ("left_context" in obj) or ("right_context" in obj):
+                left = str(obj.get("left", obj.get("left_context", "")))
+                right = str(obj.get("right", obj.get("right_context", "")))
+                rh = str(obj.get("reading_hira", ""))
+                tgt = str(obj.get("surface", obj.get("target_surface", "")))
+                src = pack_src_with_context(left=left, reading_hira=rh, right=right)
+            else:
+                src = str(obj.get("reading_hira", ""))
+                tgt = str(obj.get("surface", ""))
             if not src or not tgt:
                 continue
             samples.append(PairSample(src=src, tgt=tgt))

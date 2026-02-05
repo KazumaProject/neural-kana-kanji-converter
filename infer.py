@@ -8,13 +8,16 @@ import torch
 from kkc.model import TransformerConfig, Seq2SeqTransformer
 from kkc.tokenizer import load_vocab
 from kkc.decode import beam_search
+from kkc.data import pack_src_with_context
 from kkc.utils import get_device
 
 
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--model_dir", type=str, required=True, help="directory containing model.pt and vocabs")
-    p.add_argument("--text", type=str, required=True, help="hiragana reading input")
+    p.add_argument("--text", type=str, required=True, help="hiragana reading to convert (conversion segment)")
+    p.add_argument("--left", type=str, default="", help="left context (already committed text; optional)")
+    p.add_argument("--right", type=str, default="", help="right context (text after cursor; optional)")
     p.add_argument("--beam", type=int, default=8)
     p.add_argument("--topk", type=int, default=5)
     p.add_argument("--max_len", type=int, default=128)
@@ -38,7 +41,13 @@ def main() -> None:
     model.to(device)
     model.eval()
 
-    src_ids = src_vocab.encode(args.text, add_bos=True, add_eos=True, max_len=cfg.max_len)
+    # If context is provided, pack as: left + "⟨" + reading + "⟩" + right.
+    # This must match the training data generation.
+    src_text = args.text
+    if (args.left or args.right):
+        src_text = pack_src_with_context(left=args.left, reading_hira=args.text, right=args.right)
+
+    src_ids = src_vocab.encode(src_text, add_bos=True, add_eos=True, max_len=cfg.max_len)
     src = torch.tensor([src_ids], dtype=torch.long, device=device)
     src_pad_mask = src.eq(src_vocab.pad_id)
 
