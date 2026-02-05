@@ -29,9 +29,9 @@ python make_user_pairs.py --out user_pairs.jsonl --from_txt inputs.txt --sep tab
 
 
 ```
+#### inputs.txt (前後の文脈なし)
 
 ```bash
-# inputs.txt
 
 いぬをかいたい	犬を飼いたい
 ねこをかいたい	猫を飼いたい
@@ -43,6 +43,14 @@ python make_user_pairs.py --out user_pairs.jsonl --from_txt inputs.txt --sep tab
 
 ```
 
+#### user_inputs_ctx.txt (前後の文脈あり)
+
+```bash
+犬を	かいたい		飼いたい
+猫を	かいたい		飼いたい
+マグロを	かいたい		解体
+	てい	をなす	体
+```
 
 #### 前後の文脈の考慮した input.txt
 
