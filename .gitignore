@@ -1,7 +1,7 @@
-/out
-/out_ctx
-pairs.jsonl
-pairs_ctx.jsonl
-user_pairs.jsonl
+/out*
+pairs*.jsonl
+user_pairs*.jsonl
 inputs.txt
 user_inputs_ctx.txt
+kkc/__pycache__
+__pycache__

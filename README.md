@@ -75,6 +75,11 @@ left<TAB>reading_hira<TAB>right<TAB>surface
 # iki40B から context-aware データ生成（span モードがデフォルト）
 python make_pairs_from_wiki40b_ja.py --out pairs_ctx.jsonl --split train --streaming --max_lines 200000 --analyzer sudachi --sudachi_mode C --drop_unknown
 
+
+# データ生成を --mode sentence にする
+python make_pairs_from_wiki40b_ja.py --out pairs_sentence.jsonl --split train --streaming --max_lines 200000 --max_len 200 --analyzer sudachi --sudachi_mode C --min_coverage 1.0 --drop_unknown --mode sentence
+
+
 ```
 
 ```bash
