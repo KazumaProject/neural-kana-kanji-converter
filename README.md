@@ -91,6 +91,9 @@ python make_pairs_from_aozorabunko.py --out pairs_aozora_sentence.jsonl --mode s
 # japan law
 python make_pairs_from_japan_law.py --out pairs_law_sentence.jsonl --mode sentence --analyzer sudachi --sudachi_mode C --drop_unknown --min_coverage 1.0 --max_lines 200000 --streaming --dedup_surface
 
+# zenz-v2.5-dataset
+python make_pairs_from_zenz_v2_5_dataset.py --out pairs_zenz_sentence.jsonl --mode sentence --analyzer sudachi --sudachi_mode C --streaming --drop_unknown --min_coverage 1.0 --max_lines 200000 --dedup_surface
+
 ```
 
 ```bash
