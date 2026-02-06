@@ -101,18 +101,6 @@ python train.py --pairs pairs_ctx.jsonl --out_dir out_ctx --device cpu --epochs 
 
 python train.py --pairs pairs_ctx.jsonl user_pairs.jsonl --out_dir out_ctx --device cpu --epochs 5 --batch_size 16 --max_src_len 192 --max_tgt_len 64
 
-# まず無難：linearで 0.8 → 0.2（全epoch）
-python train.py --pairs_sentence pairs_sentence.jsonl --pairs_span pairs_ctx.jsonl --mix_schedule linear --mix_span_prob_start 0.8 --mix_span_prob_end 0.2 --out_dir out --device cuda --max_src_len 192 --max_tgt_len 64
-
-# 仕上げを強める：cosine（前半span多め、後半sentence多めが自然に）
-python train.py --pairs_sentence pairs_sentence.jsonl --pairs_span pairs_ctx.jsonl --mix_schedule cosine --mix_span_prob_start 0.9 --mix_span_prob_end 0.1 --out_dir out --device cuda --max_src_len 192 --max_tgt_len 64
-
-# --mix_span_prob 0.2〜0.3: 同音異義語も少し拾いたい時
-python train.py --pairs_sentence pairs_sentence.jsonl --pairs_span pairs_span.jsonl --out_dir out_mix --mix_schedule fixed --mix_span_prob 0.1 --epochs 10 --device cuda --max_src_len 192 --max_tgt_len 64
-
-# start 0.5〜0.7 → end 0.1〜0.2
-python train.py --pairs_sentence pairs_sentence.jsonl --pairs_span pairs_span.jsonl --out_dir out_mix --mix_schedule cosine --mix_span_prob_start 0.6 --mix_span_prob_end 0.15 --epochs 10 --device cuda --max_src_len 192 --max_tgt_len 64
-
 ```
 
 
@@ -135,8 +123,10 @@ python make_pairs_from_wiki40b_ja.py --out pairs.jsonl --split train --streaming
 ```
 
 ## Input format
+```
 pairs.jsonl (one sample per line):
 {"id":"...", "reading_hira":"きょうはみずをのんだ", "surface":"今日は水を飲んだ"}
+```
 
 ## Install
 ```bash
@@ -153,9 +143,13 @@ python train.py --pairs pairs.jsonl user_pairs.jsonl --out_dir out --device cpu 
 ```
 
 Outputs:
+```
 out/model.pt
 out/src_vocab.json
 out/tgt_vocab.json
+```
 
 ## Inference (beam search top-k)
+```bash
 python infer.py --model_dir out --text きょうはみずをのんだ --beam 8 --topk 5 --device cpu
+```
