@@ -62,13 +62,10 @@ def split_sentences(s: str) -> List[str]:
 # Strict surface filter (avoid ASCII/marks)
 # -------------------------
 _ALLOWED_SURFACE_RE = re.compile(
-    r"^[\u3000-\u303F"  # CJK symbols & punctuation
-    r"\u3040-\u309F"    # Hiragana
-    r"\u30A0-\u30FF"    # Katakana
-    r"\u4E00-\u9FFF"    # Kanji
-    r"\uFF01-\uFF60"    # Full-width forms (some punctuation)
-    r"\s"
-    r"ー・、。！？「」『』（）［］【】〔〕〈〉《》…"
+    r"^[\u3040-\u309F"   # Hiragana
+    r"\u30A0-\u30FF"     # Katakana
+    r"\u4E00-\u9FFF"     # Kanji
+    r"ー"                # prolonged sound mark
     r"]+$"
 )
 
@@ -289,19 +286,32 @@ def _make_span_examples(
         return []
 
     rng.shuffle(candidates)
+
+    # 同一文内で同じ target_surface が複数回出るのを防ぐ
+    local_seen_tgt: set[str] = set()
+
     out: List[Tuple[str, str, str, str]] = []
-    for (i, j) in candidates[:samples_per_sentence]:
+    for (i, j) in candidates:
         left_sf = "".join(surfaces[:i])
         right_sf = "".join(surfaces[j:])
         tgt_sf = "".join(surfaces[i:j])
         rh = "".join(readings[i:j])  # type: ignore[arg-type]
 
+        if not rh or not tgt_sf:
+            continue
+
+        key = tgt_sf.strip()
+        if key in local_seen_tgt:
+            continue
+        local_seen_tgt.add(key)
+
         left_sf = _slice_left_context(left_sf, max_left_chars)
         right_sf = _slice_right_context(right_sf, max_right_chars)
 
-        if not rh or not tgt_sf:
-            continue
         out.append((left_sf, rh, right_sf, tgt_sf))
+        if len(out) >= samples_per_sentence:
+            break
+
     return out
 
 
@@ -397,6 +407,13 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--drop_unknown", action="store_true", help="drop sentences containing unknown readings")
     p.add_argument("--allow_ascii", action="store_true", help="keep sentences with lots of ascii (default: filtered)")
     p.add_argument("--no_strict_surface", action="store_true", help="disable strict surface whitelist")
+
+    # dedup
+    p.add_argument(
+        "--dedup_surface",
+        action="store_true",
+        help="drop duplicates by output 'surface' (sentence: full sentence, span: target surface)",
+    )
     return p.parse_args()
 
 
@@ -408,6 +425,10 @@ def main() -> None:
     n_written = 0
     n_seen = 0
     n_filtered = 0
+    n_deduped = 0
+
+    # 出力surface（sentence: 文, span: ターゲット）で重複排除する
+    seen_surface: set[str] = set()
 
     with open(args.out, "w", encoding="utf-8") as fo:
         for sent in iter_aozorabunko_sentences(
@@ -452,10 +473,18 @@ def main() -> None:
                 continue
 
             if args.mode == "sentence":
+                out_surface = s
+                if args.dedup_surface:
+                    key = out_surface.strip()
+                    if key in seen_surface:
+                        n_deduped += 1
+                        continue
+                    seen_surface.add(key)
+
                 obj = {
                     "id": f"{args.split}:{n_written}",
                     "reading_hira": reading_hira,
-                    "surface": s,
+                    "surface": out_surface,
                     "analyzer": analyzer.name,
                     "coverage": round(coverage, 4),
                     "mode": "sentence",
@@ -477,6 +506,13 @@ def main() -> None:
                     continue
 
                 for (left_ctx, rh, right_ctx, tgt_surface) in examples:
+                    if args.dedup_surface:
+                        key = tgt_surface.strip()
+                        if key in seen_surface:
+                            n_deduped += 1
+                            continue
+                        seen_surface.add(key)
+
                     obj = {
                         "id": f"{args.split}:{n_written}",
                         "left": left_ctx,
@@ -499,9 +535,15 @@ def main() -> None:
                 break
 
             if n_written % 5000 == 0 and n_written > 0:
-                print(f"written={n_written} seen={n_seen} filtered={n_filtered}", file=sys.stderr)
+                print(
+                    f"written={n_written} seen={n_seen} filtered={n_filtered} deduped={n_deduped}",
+                    file=sys.stderr,
+                )
 
-    print(f"done: out={args.out} written={n_written} seen={n_seen} filtered={n_filtered}", file=sys.stderr)
+    print(
+        f"done: out={args.out} written={n_written} seen={n_seen} filtered={n_filtered} deduped={n_deduped}",
+        file=sys.stderr,
+    )
 
 
 if __name__ == "__main__":

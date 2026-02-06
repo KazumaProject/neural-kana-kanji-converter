@@ -79,8 +79,17 @@ python make_pairs_from_wiki40b_ja.py --out pairs_ctx.jsonl --split train --strea
 # データ生成を --mode sentence にする
 python make_pairs_from_wiki40b_ja.py --out pairs_sentence.jsonl --split train --streaming --max_lines 200000 --max_len 200 --analyzer sudachi --sudachi_mode C --min_coverage 1.0 --drop_unknown --mode sentence
 
+# 重複の削除
+python make_pairs_from_wiki40b_ja.py --out pairs_sentence.jsonl --split train --streaming --max_lines 200000 --max_len 200 --analyzer sudachi --sudachi_mode C --min_coverage 1.0 --drop_unknown --mode sentence --dedup_surface
+
 # Aozora bunko
 python make_pairs_from_aozorabunko.py --out pairs_aozora_sentence.jsonl --mode sentence --analyzer sudachi --sudachi_mode C --only_modern --drop_unknown --min_coverage 1.0 --max_lines 200000 --streaming
+
+# 重複の削除
+python make_pairs_from_aozorabunko.py --out pairs_aozora_sentence.jsonl --mode sentence --analyzer sudachi --sudachi_mode C --only_modern --drop_unknown --min_coverage 1.0 --max_lines 200000 --streaming --dedup_surface
+
+# japan law
+python make_pairs_from_japan_law.py --out pairs_law_sentence.jsonl --mode sentence --analyzer sudachi --sudachi_mode C --drop_unknown --min_coverage 1.0 --max_lines 200000 --streaming --dedup_surface
 
 ```
 

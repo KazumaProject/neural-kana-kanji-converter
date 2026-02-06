@@ -2,27 +2,26 @@ from __future__ import annotations
 
 import argparse
 import json
+import random
 import re
 import sys
 from dataclasses import dataclass
-from typing import Iterable, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-import random
 
 # -------------------------
-# Wiki40B cleanup
+# Sentence split / cleanup
 # -------------------------
-WIKI40B_MARKERS_RE = re.compile(r"(_START_ARTICLE_|_START_SECTION_|_START_PARAGRAPH_|_NEWLINE_)", flags=0)
-SENT_SPLIT_RE = re.compile(r"(?<=[。！？!?])\s*")  # rough Japanese sentence split
+SENT_SPLIT_RE = re.compile(r"(?<=[。！？!?])\s*")
+_WHITESPACE_RE = re.compile(r"[ \t]+")
 
 
-def clean_wiki40b_text(s: str) -> str:
+def clean_text(s: str) -> str:
     if not s:
         return ""
-    s = s.replace("_NEWLINE_", "\n")
-    s = WIKI40B_MARKERS_RE.sub(" ", s)
-    s = re.sub(r"[ \t]+", " ", s)
-    s = re.sub(r"\n+", "\n", s)
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    s = _WHITESPACE_RE.sub(" ", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
     return s.strip()
 
 
@@ -37,10 +36,10 @@ def split_sentences(s: str) -> List[str]:
 
 
 # -------------------------
-# Strict surface filter (avoid ASCII/marks)
+# Strict surface filter
 # -------------------------
 _ALLOWED_SURFACE_RE = re.compile(
-     r"^[\u3040-\u309F"   # Hiragana
+    r"^[\u3040-\u309F"   # Hiragana
     r"\u30A0-\u30FF"     # Katakana
     r"\u4E00-\u9FFF"     # Kanji
     r"ー"                # prolonged sound mark
@@ -58,7 +57,7 @@ def contains_disallowed_chars(s: str) -> bool:
 @dataclass(frozen=True)
 class Token:
     surface: str
-    reading_hira: Optional[str]  # None if unknown/unavailable
+    reading_hira: Optional[str]
 
 
 class Analyzer:
@@ -94,7 +93,7 @@ class SudachiAnalyzer(Analyzer):
 
     @staticmethod
     def _kata_to_hira(s: str) -> str:
-        out = []
+        out: List[str] = []
         for ch in s:
             o = ord(ch)
             if 0x30A1 <= o <= 0x30F6:
@@ -128,7 +127,7 @@ class MeCabAnalyzer(Analyzer):
 
     @staticmethod
     def _kata_to_hira(s: str) -> str:
-        out = []
+        out: List[str] = []
         for ch in s:
             o = ord(ch)
             if 0x30A1 <= o <= 0x30F6:
@@ -164,7 +163,7 @@ def build_analyzer(name: str, sudachi_mode: str) -> Analyzer:
 
 
 # -------------------------
-# Pair creation
+# Pair creation helpers
 # -------------------------
 def tokens_to_reading(tokens: List[Token]) -> Tuple[str, float, bool]:
     if not tokens:
@@ -192,8 +191,8 @@ def tokens_to_reading(tokens: List[Token]) -> Tuple[str, float, bool]:
 
 def _contains_kanji(s: str) -> bool:
     for ch in s:
-        code = ord(ch)
-        if 0x4E00 <= code <= 0x9FFF:
+        o = ord(ch)
+        if 0x4E00 <= o <= 0x9FFF:
             return True
     return False
 
@@ -244,7 +243,7 @@ def _make_span_examples(
 
     rng.shuffle(candidates)
 
-    # 同一文内で同一 target_surface を重複させない
+    # 同一文内で同じ tgt_surface が複数回出るのを防ぐ
     local_seen_tgt: set[str] = set()
 
     out: List[Tuple[str, str, str, str]] = []
@@ -272,47 +271,79 @@ def _make_span_examples(
     return out
 
 
-def iter_wiki40b_sentences(split: str, streaming: bool) -> Iterable[str]:
+# -------------------------
+# Dataset iteration
+# -------------------------
+def iter_japan_law_texts(
+    streaming: bool,
+    include_title: bool,
+    include_num: bool,
+) -> Iterable[str]:
     try:
         from datasets import load_dataset  # type: ignore
     except Exception as e:
         raise RuntimeError("datasets not installed. Install: pip install datasets") from e
 
-    ds = load_dataset("range3/wiki40b-ja", split=split, streaming=streaming)
+    ds = load_dataset("y2lan/japan-law", split="train", streaming=streaming)
+
     for ex in ds:
-        txt = clean_wiki40b_text(ex.get("text", ""))
+        body = str(ex.get("body", "") or "")
+        title = str(ex.get("title", "") or "")
+        num = str(ex.get("num", "") or "")
+
+        parts: List[str] = []
+        if include_num and num:
+            parts.append(num)
+        if include_title and title:
+            parts.append(title)
+        parts.append(body)
+
+        yield clean_text("\n".join([p for p in parts if p]))
+
+
+def iter_japan_law_sentences(*args: Any, **kwargs: Any) -> Iterable[str]:
+    for txt in iter_japan_law_texts(*args, **kwargs):
         for sent in split_sentences(txt):
             yield sent
 
 
+# -------------------------
+# CLI
+# -------------------------
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser()
     p.add_argument("--out", type=str, required=True, help="output pairs.jsonl path")
-    p.add_argument("--split", type=str, default="train", choices=["train", "validation", "test"])
-    p.add_argument("--streaming", action="store_true")
-    p.add_argument("--max_lines", type=int, default=200000, help="max output lines")
-    p.add_argument("--max_len", type=int, default=120, help="max sentence length (surface)")
-    p.add_argument("--min_len", type=int, default=2, help="min sentence length (surface)")
+    p.add_argument("--streaming", action="store_true", help="streaming load (low memory)")
 
+    p.add_argument("--include_title", action="store_true", help="prepend title to body before sentence split")
+    p.add_argument("--include_num", action="store_true", help="prepend law number (num) to body")
+
+    # sampling/output controls
+    p.add_argument("--max_lines", type=int, default=200000)
+    p.add_argument("--max_sents_seen", type=int, default=0, help="stop after seeing N sentences (0=unlimited)")
+    p.add_argument("--max_len", type=int, default=140)
+    p.add_argument("--min_len", type=int, default=2)
+
+    # mode
     p.add_argument("--mode", type=str, default="span", choices=["sentence", "span"])
 
-    p.add_argument("--samples_per_sentence", type=int, default=2, help="span-mode: examples per sentence")
-    p.add_argument("--max_target_tokens", type=int, default=4, help="span-mode: max tokens per target")
-    p.add_argument("--max_left_chars", type=int, default=24, help="span-mode: keep last N chars of left context")
-    p.add_argument("--max_right_chars", type=int, default=24, help="span-mode: keep first N chars of right context")
-    p.add_argument(
-        "--allow_no_kanji_target",
-        action="store_true",
-        help="span-mode: allow targets without kanji (default: prefer targets containing kanji)",
-    )
-    p.add_argument("--rng_seed", type=int, default=42, help="span-mode: RNG seed for span sampling")
+    # span-mode controls
+    p.add_argument("--samples_per_sentence", type=int, default=2)
+    p.add_argument("--max_target_tokens", type=int, default=4)
+    p.add_argument("--max_left_chars", type=int, default=24)
+    p.add_argument("--max_right_chars", type=int, default=24)
+    p.add_argument("--allow_no_kanji_target", action="store_true")
+    p.add_argument("--rng_seed", type=int, default=42)
 
+    # analyzer
     p.add_argument("--analyzer", type=str, default="sudachi", choices=["sudachi", "mecab", "none"])
     p.add_argument("--sudachi_mode", type=str, default="C", choices=["A", "B", "C"])
 
-    p.add_argument("--min_coverage", type=float, default=1.0, help="min token reading coverage to keep a sample")
-    p.add_argument("--drop_unknown", action="store_true", help="drop sentences containing unknown readings (recommended)")
-    p.add_argument("--allow_ascii", action="store_true", help="keep sentences with lots of ascii (default: filtered)")
+    # filtering
+    p.add_argument("--min_coverage", type=float, default=1.0)
+    p.add_argument("--drop_unknown", action="store_true")
+    p.add_argument("--allow_ascii", action="store_true")
+    p.add_argument("--no_strict_surface", action="store_true")
 
     # dedup
     p.add_argument(
@@ -320,28 +351,32 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="drop duplicates by output 'surface' (sentence: full sentence, span: target surface)",
     )
-
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
-
     rng = random.Random(args.rng_seed)
     analyzer = build_analyzer(args.analyzer, args.sudachi_mode)
 
-    out_path = args.out
     n_written = 0
     n_seen = 0
     n_filtered = 0
     n_deduped = 0
 
-    # 出力surface（sentence: 文, span: ターゲット）で重複排除
+    # 重複排除（surfaceベース）
     seen_surface: set[str] = set()
 
-    with open(out_path, "w", encoding="utf-8") as fo:
-        for sent in iter_wiki40b_sentences(split=args.split, streaming=args.streaming):
+    with open(args.out, "w", encoding="utf-8") as fo:
+        for sent in iter_japan_law_sentences(
+            streaming=args.streaming,
+            include_title=args.include_title,
+            include_num=args.include_num,
+        ):
             n_seen += 1
+            if args.max_sents_seen > 0 and n_seen > args.max_sents_seen:
+                break
+
             s = sent.strip()
             if not s:
                 continue
@@ -349,7 +384,7 @@ def main() -> None:
                 n_filtered += 1
                 continue
 
-            if contains_disallowed_chars(s):
+            if (not args.no_strict_surface) and contains_disallowed_chars(s):
                 n_filtered += 1
                 continue
 
@@ -382,7 +417,7 @@ def main() -> None:
                     seen_surface.add(key)
 
                 obj = {
-                    "id": f"{args.split}:{n_written}",
+                    "id": f"train:{n_written}",
                     "reading_hira": reading_hira,
                     "surface": out_surface,
                     "analyzer": analyzer.name,
@@ -414,7 +449,7 @@ def main() -> None:
                         seen_surface.add(key)
 
                     obj = {
-                        "id": f"{args.split}:{n_written}",
+                        "id": f"train:{n_written}",
                         "left": left_ctx,
                         "reading_hira": rh,
                         "right": right_ctx,
@@ -425,7 +460,6 @@ def main() -> None:
                     }
                     fo.write(json.dumps(obj, ensure_ascii=False) + "\n")
                     n_written += 1
-
                     if n_written >= args.max_lines:
                         break
 
@@ -442,7 +476,7 @@ def main() -> None:
                 )
 
     print(
-        f"done: out={out_path} written={n_written} seen={n_seen} filtered={n_filtered} deduped={n_deduped}",
+        f"done: out={args.out} written={n_written} seen={n_seen} filtered={n_filtered} deduped={n_deduped}",
         file=sys.stderr,
     )
 
