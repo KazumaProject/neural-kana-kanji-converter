@@ -100,6 +100,19 @@ python train.py --pairs pairs_ctx.jsonl --out_dir out_ctx --device cpu --epochs 
 
 
 python train.py --pairs pairs_ctx.jsonl user_pairs.jsonl --out_dir out_ctx --device cpu --epochs 5 --batch_size 16 --max_src_len 192 --max_tgt_len 64
+
+# まず無難：linearで 0.8 → 0.2（全epoch）
+python train.py --pairs_sentence pairs_sentence.jsonl --pairs_span pairs_ctx.jsonl --mix_schedule linear --mix_span_prob_start 0.8 --mix_span_prob_end 0.2 --out_dir out --device cuda --max_src_len 192 --max_tgt_len 64
+
+# 仕上げを強める：cosine（前半span多め、後半sentence多めが自然に）
+python train.py --pairs_sentence pairs_sentence.jsonl --pairs_span pairs_ctx.jsonl --mix_schedule cosine --mix_span_prob_start 0.9 --mix_span_prob_end 0.1 --out_dir out --device cuda --max_src_len 192 --max_tgt_len 64
+
+# 最初は span（0.2）→ sentence（0.8）を 全 epoch にわたり cosine で変化
+python train.py --pairs_sentence pairs_sentence.jsonl --pairs_span pairs_ctx.jsonl --out_dir out_mix --mix_schedule cosine --mix_span_prob_start 0.8 --mix_span_prob_end 0.2 --epochs 10 --max_src_len 192 --max_tgt_len 64 --device cuda
+
+# 最初の 3 epoch 分だけ 0.9→0.1 に落として、それ以降は end に張り付かせる（schedule_epochs=3）
+python train.py --pairs_sentence pairs_sentence.jsonl --pairs_span pairs_ctx.jsonl --out_dir out --mix_schedule cosine --mix_span_prob_start 0.6 --mix_span_prob_end 0.15 --epochs 10 --max_src_len 192 --max_tgt_len 64 --device cuda
+
 ```
 
 

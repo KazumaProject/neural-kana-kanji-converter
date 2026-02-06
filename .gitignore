@@ -1,5 +1,6 @@
 /out*
 pairs*.jsonl
+mozc
 user_pairs*.jsonl
 inputs.txt
 user_inputs_ctx.txt
