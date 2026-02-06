@@ -36,14 +36,14 @@ def split_sentences(s: str) -> List[str]:
     return out
 
 
-# -------------------------
-# Strict surface filter (avoid ASCII/marks)
-# -------------------------
+_KAN_NUMERALS = "〇零一二三四五六七八九十百千万億兆京"
+
 _ALLOWED_SURFACE_RE = re.compile(
-     r"^[\u3040-\u309F"   # Hiragana
-    r"\u30A0-\u30FF"     # Katakana
-    r"\u4E00-\u9FFF"     # Kanji
-    r"ー"                # prolonged sound mark
+    rf"^(?!.*[{_KAN_NUMERALS}])"  # 漢数字がどこかにあったらNG
+    r"[\u3040-\u309F"            # Hiragana
+    r"\u30A0-\u30FF"             # Katakana
+    r"\u4E00-\u9FFF"             # Kanji
+    r"ー"                        # prolonged sound mark
     r"]+$"
 )
 
