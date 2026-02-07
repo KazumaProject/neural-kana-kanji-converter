@@ -181,3 +181,33 @@ python infer_seg.py --model_dir out_seg --text わたしのなまえはなかの
 python infer_seg.py --model_dir out_seg --text わたしのなまえはなかのです --nbest 5 --beam_size 64 --boundary_penalty 0.1 --min_seg_len 1 --max_seg_len 64
 
 ```
+1) rerank_train.jsonl を作る（候補生成）
+
+例：Sudachiで、候補16件
+
+```bash
+
+python make_rerank_train.py --in_pairs pairs_sentence.jsonl pairs_ctx.jsonl --out rerank_train.jsonl --analyzer sudachi --sudachi_mode C --topk 16
+
+
+```
+
+MeCabでやるなら:
+
+```bash
+python make_rerank_train.py --in_pairs pairs_sentence.jsonl pairs_ctx.jsonl --out rerank_train.jsonl --analyzer mecab --topk 16
+```
+
+2) reranker を学習
+
+```bash
+python train_rerank_candidates.py --data rerank_train.jsonl --out_dir out_rerank --topk 16 --epochs 3 --device cuda
+
+```
+
+3) 推論時：「外部候補リスト」を渡して並べ替え
+
+```bash
+python infer_rerank_candidates.py --rerank_model_dir out_rerank --text わたしのなまえはなかのです --candidates "わたしの名前はなかのです|私の名前は中野です|私のなまえは中野です"
+
+```
