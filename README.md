@@ -156,3 +156,25 @@ out/tgt_vocab.json
 ```bash
 python infer.py --model_dir out --text きょうはみずをのんだ --beam 8 --topk 5 --device cpu
 ```
+
+## Unified dataset maker (new)
+
+```bash
+# KKC sentence pairs
+python make_pairs_unified.py --out pairs_sentence.jsonl --task kkc_sentence --source wiki40b_ja --split train --streaming --analyzer sudachi --sudachi_mode C --drop_unknown
+
+# Segmentation boundary pairs
+python make_pairs_unified.py --out pairs_seg_wiki.jsonl --task seg_boundary --source wiki40b_ja --split train --streaming --analyzer sudachi --sudachi_mode C --drop_unknown
+```
+
+## Train segmentation boundary model (new)
+
+```bash
+python train_seg.py --pairs_seg pairs_seg.jsonl --out_dir out_seg --epochs 5 --device cuda --max_len 256
+```
+
+## Infer segmentation (new)
+
+```bash
+python infer_seg.py --model_dir out_seg --text あるつはいまーびょうにおけるやくわり
+```

@@ -5,4 +5,6 @@ user_pairs*.jsonl
 inputs.txt
 user_inputs_ctx.txt
 kkc/__pycache__
-__pycache__
+__pycache__/
+*.py[cod]
+*$py.class
