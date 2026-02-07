@@ -176,5 +176,8 @@ python train_seg.py --pairs_seg pairs_seg.jsonl --out_dir out_seg --epochs 5 --d
 ## Infer segmentation (new)
 
 ```bash
-python infer_seg.py --model_dir out_seg --text あるつはいまーびょうにおけるやくわり
+python infer_seg.py --model_dir out_seg --text わたしのなまえはなかのです
+
+python infer_seg.py --model_dir out_seg --text わたしのなまえはなかのです --nbest 5 --beam_size 64 --boundary_penalty 0.1 --min_seg_len 1 --max_seg_len 64
+
 ```
